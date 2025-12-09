@@ -70,6 +70,7 @@ from skyvern.webeye.actions.actions import (
     DragAction,
     ExtractAction,
     GotoUrlAction,
+    HoverAction,
     InputTextAction,
     KeypressAction,
     LeftMouseAction,
@@ -138,6 +139,7 @@ ACTION_TYPE_TO_CLASS = {
     ActionType.SELECT_OPTION: SelectOptionAction,
     ActionType.CHECKBOX: CheckboxAction,
     ActionType.WAIT: WaitAction,
+    ActionType.HOVER: HoverAction,
     ActionType.SOLVE_CAPTCHA: SolveCaptchaAction,
     ActionType.RELOAD_PAGE: ReloadPageAction,
     ActionType.EXTRACT: ExtractAction,
@@ -579,6 +581,10 @@ def convert_to_workflow_run_block(
         instructions=workflow_run_block_model.instructions,
         positive_descriptor=workflow_run_block_model.positive_descriptor,
         negative_descriptor=workflow_run_block_model.negative_descriptor,
+        executed_branch_id=workflow_run_block_model.executed_branch_id,
+        executed_branch_expression=workflow_run_block_model.executed_branch_expression,
+        executed_branch_result=workflow_run_block_model.executed_branch_result,
+        executed_branch_next_block=workflow_run_block_model.executed_branch_next_block,
     )
     if task:
         if task.finished_at and task.started_at:

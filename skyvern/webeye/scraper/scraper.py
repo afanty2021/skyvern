@@ -125,7 +125,7 @@ def build_element_dict(
 
     for element in elements:
         element_id: str = element.get("id", "")
-        # get_interactable_element_tree marks each interactable element with a unique_id attribute
+        # get_interactable_element_tree marks each interactable element with a SKYVERN_ID_ATTR attribute
         id_to_css_dict[element_id] = f"[{SKYVERN_ID_ATTR}='{element_id}']"
         id_to_element_dict[element_id] = element
         id_to_frame_dict[element_id] = element["frame"]
@@ -319,6 +319,15 @@ async def scrape_web_unsafe(
         if token_count > DEFAULT_MAX_TOKENS:
             max_screenshot_number = min(max_screenshot_number, 1)
 
+        # get current x, y position of the page
+        x: int | None = None
+        y: int | None = None
+        try:
+            x, y = await skyvern_frame.get_scroll_x_y()
+            LOG.debug("Current x, y position of the page before scraping", x=x, y=y)
+        except Exception:
+            LOG.warning("Failed to get current x, y position of the page", exc_info=True)
+
         screenshots = await SkyvernFrame.take_split_screenshots(
             page=page,
             url=url,
@@ -326,6 +335,12 @@ async def scrape_web_unsafe(
             max_number=max_screenshot_number,
             scroll=scroll,
         )
+
+        # scroll back to the original x, y position of the page
+        if x is not None and y is not None:
+            await skyvern_frame.safe_scroll_to_x_y(x, y)
+            LOG.debug("Scrolled back to the original x, y position of the page after scraping", x=x, y=y)
+
     id_to_css_dict, id_to_element_dict, id_to_frame_dict, id_to_element_hash, hash_to_element_ids = build_element_dict(
         elements
     )
@@ -409,16 +424,18 @@ async def add_frame_interactable_elements(
         # it will get stuck when we `frame.evaluate()` on an invisible iframe
         if not await frame_element.is_visible():
             return elements, element_tree
-        unique_id = await frame_element.get_attribute("unique_id")
-        if not unique_id:
+        skyvern_id = await frame_element.get_attribute(SKYVERN_ID_ATTR)
+        if not skyvern_id:
             LOG.info(
-                "No unique_id found for frame, skipping",
+                "No Skyvern id found for frame, skipping",
                 frame_index=frame_index,
+                attr=SKYVERN_ID_ATTR,
             )
             return elements, element_tree
     except Exception:
         LOG.warning(
-            "Unable to get unique_id from frame_element",
+            "Unable to get Skyvern id from frame_element",
+            attr=SKYVERN_ID_ATTR,
             exc_info=True,
         )
         return elements, element_tree
@@ -427,11 +444,11 @@ async def add_frame_interactable_elements(
     await skyvern_frame.safe_wait_for_animation_end()
 
     frame_elements, frame_element_tree = await skyvern_frame.build_tree_from_body(
-        frame_name=unique_id, frame_index=frame_index
+        frame_name=skyvern_id, frame_index=frame_index
     )
 
     for element in elements:
-        if element["id"] == unique_id:
+        if element["id"] == skyvern_id:
             element["children"] = frame_element_tree
 
     elements = elements + frame_elements
@@ -637,6 +654,9 @@ def _should_keep_unique_id(element: dict) -> bool:
     # case where we shouldn't keep unique_id
     # 1. no readonly attr and not disable attr and no interactable
     # 2. readonly=false and disable=false and interactable=false
+
+    if element.get("hoverOnly"):
+        return True
 
     attributes = element.get("attributes", {})
     if (

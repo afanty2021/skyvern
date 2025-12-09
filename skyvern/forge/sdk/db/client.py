@@ -1227,6 +1227,7 @@ class AgentDB:
         workflow_run_block_id: str | None = None,
         thought_id: str | None = None,
         task_v2_id: str | None = None,
+        limit: int | None = None,
     ) -> list[Artifact]:
         try:
             async with self.Session() as session:
@@ -1254,6 +1255,9 @@ class AgentDB:
                     )
 
                 query = query.order_by(ArtifactModel.created_at.desc())
+
+                if limit is not None:
+                    query = query.limit(limit)
 
                 artifacts = (await session.scalars(query)).all()
                 LOG.debug("Artifacts fetched", count=len(artifacts))
@@ -1286,6 +1290,7 @@ class AgentDB:
             workflow_run_block_id=workflow_run_block_id,
             thought_id=thought_id,
             task_v2_id=task_v2_id,
+            limit=1,
         )
         return artifacts[0] if artifacts else None
 
@@ -3906,6 +3911,11 @@ class AgentDB:
         instructions: str | None = None,
         positive_descriptor: str | None = None,
         negative_descriptor: str | None = None,
+        # conditional block
+        executed_branch_id: str | None = None,
+        executed_branch_expression: str | None = None,
+        executed_branch_result: bool | None = None,
+        executed_branch_next_block: str | None = None,
     ) -> WorkflowRunBlock:
         async with self.Session() as session:
             workflow_run_block = (
@@ -3972,6 +3982,15 @@ class AgentDB:
                     workflow_run_block.positive_descriptor = positive_descriptor
                 if negative_descriptor:
                     workflow_run_block.negative_descriptor = negative_descriptor
+                # conditional block fields
+                if executed_branch_id:
+                    workflow_run_block.executed_branch_id = executed_branch_id
+                if executed_branch_expression is not None:
+                    workflow_run_block.executed_branch_expression = executed_branch_expression
+                if executed_branch_result is not None:
+                    workflow_run_block.executed_branch_result = executed_branch_result
+                if executed_branch_next_block is not None:
+                    workflow_run_block.executed_branch_next_block = executed_branch_next_block
                 await session.commit()
                 await session.refresh(workflow_run_block)
             else:
@@ -4542,6 +4561,40 @@ class AgentDB:
                 task_run.url_hash = url_hash
             await session.commit()
 
+    async def update_job_run_compute_cost(
+        self,
+        organization_id: str,
+        run_id: str,
+        instance_type: str | None = None,
+        vcpu_millicores: int | None = None,
+        duration_ms: int | None = None,
+        compute_cost: float | None = None,
+    ) -> None:
+        """Update compute cost metrics for a job run."""
+        async with self.Session() as session:
+            task_run = (
+                await session.scalars(
+                    select(TaskRunModel).filter_by(run_id=run_id).filter_by(organization_id=organization_id)
+                )
+            ).first()
+            if not task_run:
+                LOG.warning(
+                    "TaskRun not found for compute cost update",
+                    run_id=run_id,
+                    organization_id=organization_id,
+                )
+                return
+
+            if instance_type is not None:
+                task_run.instance_type = instance_type
+            if vcpu_millicores is not None:
+                task_run.vcpu_millicores = vcpu_millicores
+            if duration_ms is not None:
+                task_run.duration_ms = duration_ms
+            if compute_cost is not None:
+                task_run.compute_cost = compute_cost
+            await session.commit()
+
     async def create_credential(
         self,
         organization_id: str,
@@ -4554,6 +4607,7 @@ class AgentDB:
         card_last4: str | None,
         card_brand: str | None,
         totp_identifier: str | None = None,
+        secret_label: str | None = None,
     ) -> Credential:
         async with self.Session() as session:
             credential = CredentialModel(
@@ -4567,6 +4621,7 @@ class AgentDB:
                 totp_identifier=totp_identifier,
                 card_last4=card_last4,
                 card_brand=card_brand,
+                secret_label=secret_label,
             )
             session.add(credential)
             await session.commit()

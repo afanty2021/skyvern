@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 LOG = structlog.get_logger()
 
-BlockMetadata = dict[str, str | int | float | bool | dict | list]
+BlockMetadata = dict[str, str | int | float | bool | dict | list | None]
 
 jinja_sandbox_env = SandboxedEnvironment()
 
@@ -234,6 +234,33 @@ class WorkflowRunContext:
         if isinstance(secret_id_or_value, str):
             return self.secrets.get(secret_id_or_value)
         return None
+
+    def mask_secrets_in_data(self, data: Any, mask: str = "*****") -> Any:
+        """
+        Recursively replace any real secret values in data with a mask.
+        Used to sanitize HttpRequestBlock output before storing.
+
+        Only masks values that exist in self.secrets (registered credentials).
+        """
+        if not self.secrets:
+            return data
+
+        # Collect all non-empty string secret values
+        secret_values = {v for v in self.secrets.values() if isinstance(v, str) and v}
+
+        if not secret_values:
+            return data
+
+        if isinstance(data, str):
+            result = data
+            for secret in secret_values:
+                result = result.replace(secret, mask)
+            return result
+        elif isinstance(data, dict):
+            return {k: self.mask_secrets_in_data(v, mask) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self.mask_secrets_in_data(item, mask) for item in data]
+        return data
 
     async def get_secrets_from_password_manager(self) -> dict[str, Any]:
         """

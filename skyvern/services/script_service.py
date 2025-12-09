@@ -60,7 +60,7 @@ from skyvern.schemas.scripts import (
     ScriptFileCreate,
     ScriptStatus,
 )
-from skyvern.schemas.workflows import BlockStatus, BlockType, FileStorageType, FileType
+from skyvern.schemas.workflows import BlockResult, BlockStatus, BlockType, FileStorageType, FileType
 from skyvern.webeye.scraper.scraped_page import ElementTreeFormat
 
 LOG = structlog.get_logger()
@@ -612,7 +612,21 @@ async def _update_workflow_block(
             except asyncio.TimeoutError:
                 LOG.warning("Timeout getting downloaded files", task_id=task_id)
 
-            task_output = TaskOutput.from_task(updated_task, downloaded_files)
+            task_screenshots = await app.WORKFLOW_SERVICE.get_recent_task_screenshot_urls(
+                organization_id=context.organization_id,
+                task_id=task_id,
+            )
+            workflow_screenshots = await app.WORKFLOW_SERVICE.get_recent_workflow_screenshot_urls(
+                workflow_run_id=context.workflow_run_id,
+                organization_id=context.organization_id,
+            )
+
+            task_output = TaskOutput.from_task(
+                updated_task,
+                downloaded_files,
+                task_screenshots=task_screenshots,
+                workflow_screenshots=workflow_screenshots,
+            )
             final_output = task_output.model_dump()
             step_for_billing: Step | None = None
             if step_id:
@@ -1734,6 +1748,18 @@ async def validate(
     if not complete_criterion and not terminate_criterion:
         raise Exception("Both complete criterion and terminate criterion are empty")
 
+    result = await execute_validation(complete_criterion, terminate_criterion, error_code_mapping, label, model)
+    if result.status == BlockStatus.terminated:
+        raise ScriptTerminationException(result.failure_reason)
+
+
+async def execute_validation(
+    complete_criterion: str | None,
+    terminate_criterion: str | None,
+    error_code_mapping: dict[str, str] | None,
+    label: str | None = None,
+    model: dict[str, Any] | None = None,
+) -> BlockResult:
     block_validation_output = await _validate_and_get_output_parameter(label)
     validation_block = ValidationBlock(
         label=block_validation_output.label,
@@ -1751,8 +1777,7 @@ async def validate(
         organization_id=block_validation_output.organization_id,
         browser_session_id=block_validation_output.browser_session_id,
     )
-    if result.status == BlockStatus.terminated:
-        raise ScriptTerminationException(result.failure_reason)
+    return result
 
 
 async def wait(seconds: int, label: str | None = None) -> None:

@@ -205,6 +205,19 @@ async def run_sdk_action(
                 prompt=action.prompt,
             )
             result = xpath_result
+        elif action.type == "validate":
+            validation_result = await page_ai.ai_validate(
+                prompt=action.prompt,
+                model=action.model,
+            )
+            result = validation_result
+        elif action.type == "prompt":
+            prompt_result = await page_ai.ai_prompt(
+                prompt=action.prompt,
+                schema=action.schema,
+                model=action.model,
+            )
+            result = prompt_result
         await app.DATABASE.update_task(
             task_id=task.task_id,
             organization_id=organization_id,

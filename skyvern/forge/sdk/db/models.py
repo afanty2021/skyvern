@@ -3,6 +3,7 @@ import datetime
 import sqlalchemy
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -714,6 +715,12 @@ class WorkflowRunBlockModel(Base):
     positive_descriptor = Column(String, nullable=True)
     negative_descriptor = Column(String, nullable=True)
 
+    # conditional block
+    executed_branch_id = Column(String, nullable=True)
+    executed_branch_expression = Column(String, nullable=True)
+    executed_branch_result = Column(Boolean, nullable=True)
+    executed_branch_next_block = Column(String, nullable=True)
+
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
 
@@ -861,6 +868,11 @@ class TaskRunModel(Base):
     url = Column(String, nullable=True)
     url_hash = Column(String, nullable=True)
     cached = Column(Boolean, nullable=False, default=False)
+    # Compute cost tracking fields
+    instance_type = Column(String, nullable=True)
+    vcpu_millicores = Column(Integer, nullable=True)
+    duration_ms = Column(BigInteger, nullable=True)
+    compute_cost = Column(Numeric, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)
 
@@ -895,6 +907,7 @@ class CredentialModel(Base):
     totp_identifier = Column(String, nullable=True, default=None)
     card_last4 = Column(String, nullable=True)
     card_brand = Column(String, nullable=True)
+    secret_label = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False)

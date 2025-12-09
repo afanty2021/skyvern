@@ -65,6 +65,14 @@ class SkyvernPageAi(Protocol):
         """Extract information from the page using AI."""
         ...
 
+    async def ai_validate(
+        self,
+        prompt: str,
+        model: dict[str, Any] | None = None,
+    ) -> bool:
+        """Validate the current page state using AI based on the given criteria."""
+        ...
+
     async def ai_act(
         self,
         prompt: str,
@@ -77,4 +85,13 @@ class SkyvernPageAi(Protocol):
         prompt: str,
     ) -> str | None:
         """Locate an element on the page using AI and return its XPath selector."""
+        ...
+
+    async def ai_prompt(
+        self,
+        prompt: str,
+        schema: dict[str, Any] | None = None,
+        model: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | list | str | None:
+        """Send a prompt to the LLM and get a response based on the provided schema."""
         ...

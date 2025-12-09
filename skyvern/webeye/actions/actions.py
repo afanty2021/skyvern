@@ -3,8 +3,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Type, TypeVar
 
 import structlog
-from litellm import ConfigDict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from skyvern.errors.errors import UserDefinedError
 from skyvern.webeye.actions.action_types import ActionType
@@ -281,6 +280,11 @@ class CheckboxAction(WebAction):
 class WaitAction(Action):
     action_type: ActionType = ActionType.WAIT
     seconds: int = 20
+
+
+class HoverAction(WebAction):
+    action_type: ActionType = ActionType.HOVER
+    hold_seconds: float = 0.0
 
 
 class TerminateAction(DecisiveAction):

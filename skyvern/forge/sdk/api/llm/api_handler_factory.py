@@ -10,6 +10,7 @@ import structlog
 from anthropic import NOT_GIVEN
 from anthropic.types.beta.beta_message import BetaMessage as AnthropicMessage
 from jinja2 import Template
+from litellm.types.router import AllowedFailsPolicy
 from litellm.utils import CustomStreamWrapper, ModelResponse
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -19,6 +20,7 @@ from skyvern.config import settings
 from skyvern.exceptions import SkyvernContextWindowExceededError
 from skyvern.forge import app
 from skyvern.forge.forge_openai_client import ForgeAsyncHttpxClientWrapper
+from skyvern.forge.sdk.api.llm.api_handler import LLMAPIHandler, dummy_llm_api_handler
 from skyvern.forge.sdk.api.llm.config_registry import LLMConfigRegistry
 from skyvern.forge.sdk.api.llm.exceptions import (
     DuplicateCustomLLMProviderError,
@@ -26,7 +28,11 @@ from skyvern.forge.sdk.api.llm.exceptions import (
     LLMProviderError,
     LLMProviderErrorRetryableTask,
 )
-from skyvern.forge.sdk.api.llm.models import LLMAPIHandler, LLMConfig, LLMRouterConfig, dummy_llm_api_handler
+from skyvern.forge.sdk.api.llm.models import (
+    LLMAllowedFailsPolicy,
+    LLMConfig,
+    LLMRouterConfig,
+)
 from skyvern.forge.sdk.api.llm.ui_tars_response import UITarsResponse
 from skyvern.forge.sdk.api.llm.utils import llm_messages_builder, llm_messages_builder_with_history, parse_api_response
 from skyvern.forge.sdk.artifact.models import ArtifactType
@@ -42,6 +48,9 @@ LOG = structlog.get_logger()
 
 EXTRACT_ACTION_PROMPT_NAME = "extract-actions"
 CHECK_USER_GOAL_PROMPT_NAMES = {"check-user-goal", "check-user-goal-with-termination"}
+
+# Default thinking budget for extract-actions prompt (can be overridden by THINKING_BUDGET_OPTIMIZATION experiment)
+EXTRACT_ACTION_DEFAULT_THINKING_BUDGET = 512
 
 
 @runtime_checkable
@@ -101,6 +110,20 @@ def _log_vertex_cache_hit_if_needed(
             cache_key=context.vertex_cache_key,
             cache_variant=context.vertex_cache_variant,
         )
+
+
+def _convert_allowed_fails_policy(policy: LLMAllowedFailsPolicy | None) -> AllowedFailsPolicy | None:
+    if policy is None:
+        return None
+
+    return AllowedFailsPolicy(
+        BadRequestErrorAllowedFails=policy.bad_request_error_allowed_fails,
+        AuthenticationErrorAllowedFails=policy.authentication_error_allowed_fails,
+        TimeoutErrorAllowedFails=policy.timeout_error_allowed_fails,
+        RateLimitErrorAllowedFails=policy.rate_limit_error_allowed_fails,
+        ContentPolicyViolationErrorAllowedFails=policy.content_policy_violation_error_allowed_fails,
+        InternalServerErrorAllowedFails=policy.internal_server_error_allowed_fails,
+    )
 
 
 class LLMAPIHandlerFactory:
@@ -310,7 +333,7 @@ class LLMAPIHandlerFactory:
             retry_after=llm_config.retry_delay_seconds,
             disable_cooldowns=llm_config.disable_cooldowns,
             allowed_fails=llm_config.allowed_fails,
-            allowed_fails_policy=llm_config.allowed_fails_policy,
+            allowed_fails_policy=_convert_allowed_fails_policy(llm_config.allowed_fails_policy),
             cooldown_time=llm_config.cooldown_time,
             set_verbose=(False if settings.is_cloud_environment() else llm_config.set_verbose),
             enable_pre_call_checks=True,
@@ -359,6 +382,11 @@ class LLMAPIHandlerFactory:
                 new_budget = LLMAPIHandlerFactory._thinking_budget_settings[prompt_name]
                 LLMAPIHandlerFactory._apply_thinking_budget_optimization(
                     parameters, new_budget, llm_config, prompt_name
+                )
+            elif prompt_name == EXTRACT_ACTION_PROMPT_NAME:
+                # Apply default thinking budget for extract-actions (512) unless overridden by experiment
+                LLMAPIHandlerFactory._apply_thinking_budget_optimization(
+                    parameters, EXTRACT_ACTION_DEFAULT_THINKING_BUDGET, llm_config, prompt_name
                 )
 
             context = skyvern_context.current()
@@ -760,6 +788,11 @@ class LLMAPIHandlerFactory:
                 LLMAPIHandlerFactory._apply_thinking_budget_optimization(
                     active_parameters, new_budget, llm_config, prompt_name
                 )
+            elif prompt_name == EXTRACT_ACTION_PROMPT_NAME:
+                # Apply default thinking budget for extract-actions (512) unless overridden by experiment
+                LLMAPIHandlerFactory._apply_thinking_budget_optimization(
+                    active_parameters, EXTRACT_ACTION_DEFAULT_THINKING_BUDGET, llm_config, prompt_name
+                )
 
             context = skyvern_context.current()
             is_speculative_step = step.is_speculative if step else False
@@ -968,7 +1001,7 @@ class LLMAPIHandlerFactory:
 
             _log_vertex_cache_hit_if_needed(context, prompt_name, model_name, cached_tokens)
 
-            if step:
+            if step and not is_speculative_step:
                 await app.DATABASE.update_step(
                     task_id=step.task_id,
                     step_id=step.step_id,
@@ -990,27 +1023,32 @@ class LLMAPIHandlerFactory:
                     thought_cost=llm_cost,
                 )
             parsed_response = parse_api_response(response, llm_config.add_assistant_prefix, force_dict)
-            await app.ARTIFACT_MANAGER.create_llm_artifact(
-                data=json.dumps(parsed_response, indent=2).encode("utf-8"),
-                artifact_type=ArtifactType.LLM_RESPONSE_PARSED,
-                step=step,
-                task_v2=task_v2,
-                thought=thought,
-                ai_suggestion=ai_suggestion,
-            )
-
-            if context and len(context.hashed_href_map) > 0:
-                llm_content = json.dumps(parsed_response)
-                rendered_content = Template(llm_content).render(context.hashed_href_map)
-                parsed_response = json.loads(rendered_content)
+            parsed_response_json = json.dumps(parsed_response, indent=2)
+            if step and not is_speculative_step:
                 await app.ARTIFACT_MANAGER.create_llm_artifact(
-                    data=json.dumps(parsed_response, indent=2).encode("utf-8"),
-                    artifact_type=ArtifactType.LLM_RESPONSE_RENDERED,
+                    data=parsed_response_json.encode("utf-8"),
+                    artifact_type=ArtifactType.LLM_RESPONSE_PARSED,
                     step=step,
                     task_v2=task_v2,
                     thought=thought,
                     ai_suggestion=ai_suggestion,
                 )
+
+            rendered_response_json = None
+            if context and len(context.hashed_href_map) > 0:
+                llm_content = json.dumps(parsed_response)
+                rendered_content = Template(llm_content).render(context.hashed_href_map)
+                parsed_response = json.loads(rendered_content)
+                rendered_response_json = json.dumps(parsed_response, indent=2)
+                if step and not is_speculative_step:
+                    await app.ARTIFACT_MANAGER.create_llm_artifact(
+                        data=rendered_response_json.encode("utf-8"),
+                        artifact_type=ArtifactType.LLM_RESPONSE_RENDERED,
+                        step=step,
+                        task_v2=task_v2,
+                        thought=thought,
+                        ai_suggestion=ai_suggestion,
+                    )
 
             # Track LLM API handler duration, token counts, and cost
             organization_id = organization_id or (
@@ -1032,6 +1070,23 @@ class LLMAPIHandlerFactory:
                 cached_tokens=cached_tokens if cached_tokens > 0 else None,
                 llm_cost=llm_cost if llm_cost > 0 else None,
             )
+
+            if step and is_speculative_step:
+                step.speculative_llm_metadata = SpeculativeLLMMetadata(
+                    prompt=llm_prompt_value,
+                    llm_request_json=llm_request_json,
+                    llm_response_json=llm_response_json,
+                    parsed_response_json=parsed_response_json,
+                    rendered_response_json=rendered_response_json,
+                    llm_key=llm_key,
+                    model=llm_config.model_name,
+                    duration_seconds=duration_seconds,
+                    input_tokens=prompt_tokens if prompt_tokens > 0 else None,
+                    output_tokens=completion_tokens if completion_tokens > 0 else None,
+                    reasoning_tokens=reasoning_tokens if reasoning_tokens > 0 else None,
+                    cached_tokens=cached_tokens if cached_tokens > 0 else None,
+                    llm_cost=llm_cost if llm_cost > 0 else None,
+                )
 
             return parsed_response
 

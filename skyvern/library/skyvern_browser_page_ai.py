@@ -11,6 +11,8 @@ from skyvern.client import (
     RunSdkActionRequestAction_AiUploadFile,
     RunSdkActionRequestAction_Extract,
     RunSdkActionRequestAction_LocateElement,
+    RunSdkActionRequestAction_Prompt,
+    RunSdkActionRequestAction_Validate,
 )
 from skyvern.config import settings
 from skyvern.core.script_generations.skyvern_page_ai import SkyvernPageAi
@@ -175,6 +177,34 @@ class SdkSkyvernPageAi(SkyvernPageAi):
         self._browser.workflow_run_id = response.workflow_run_id
         return response.result if response.result else None
 
+    async def ai_validate(
+        self,
+        prompt: str,
+        model: dict[str, Any] | None = None,
+    ) -> bool:
+        """Validate the current page state using AI via API call."""
+
+        LOG.info(
+            "AI validate",
+            prompt=prompt,
+            model=model,
+            workflow_run_id=self._browser.workflow_run_id,
+        )
+
+        response = await self._browser.skyvern.run_sdk_action(
+            url=self._page.url,
+            action=RunSdkActionRequestAction_Validate(
+                prompt=prompt,
+                model=model,
+            ),
+            browser_session_id=self._browser.browser_session_id,
+            browser_address=self._browser.browser_address,
+            workflow_run_id=self._browser.workflow_run_id,
+        )
+        self._browser.workflow_run_id = response.workflow_run_id
+
+        return bool(response.result) if response.result is not None else False
+
     async def ai_act(
         self,
         prompt: str,
@@ -225,3 +255,33 @@ class SdkSkyvernPageAi(SkyvernPageAi):
             return response.result
 
         return None
+
+    async def ai_prompt(
+        self,
+        prompt: str,
+        schema: dict[str, Any] | None = None,
+        model: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | list | str | None:
+        """Send a prompt to the LLM and get a response based on the provided schema via API call."""
+
+        LOG.info(
+            "AI prompt",
+            prompt=prompt,
+            model=model,
+            workflow_run_id=self._browser.workflow_run_id,
+        )
+
+        response = await self._browser.skyvern.run_sdk_action(
+            url=self._page.url,
+            action=RunSdkActionRequestAction_Prompt(
+                prompt=prompt,
+                schema=schema,
+                model=model,
+            ),
+            browser_session_id=self._browser.browser_session_id,
+            browser_address=self._browser.browser_address,
+            workflow_run_id=self._browser.workflow_run_id,
+        )
+        self._browser.workflow_run_id = response.workflow_run_id
+
+        return response.result if response.result is not None else None

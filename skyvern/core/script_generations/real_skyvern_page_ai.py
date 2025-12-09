@@ -17,6 +17,8 @@ from skyvern.forge.sdk.api.files import validate_download_url
 from skyvern.forge.sdk.api.llm.schema_validator import validate_and_fill_extraction_result
 from skyvern.forge.sdk.core import skyvern_context
 from skyvern.forge.sdk.schemas.totp_codes import OTPType
+from skyvern.schemas.workflows import BlockStatus
+from skyvern.services import script_service
 from skyvern.services.otp_service import poll_otp_value
 from skyvern.utils.prompt_engine import load_prompt_with_elements
 from skyvern.webeye.actions import handler_utils
@@ -563,6 +565,19 @@ class RealSkyvernPageAi(SkyvernPageAi):
             print(f"{'-' * 50}\n")
         return result
 
+    async def ai_validate(
+        self,
+        prompt: str,
+        model: dict[str, Any] | None = None,
+    ) -> bool:
+        result = await script_service.execute_validation(
+            complete_criterion=prompt,
+            terminate_criterion=None,
+            error_code_mapping=None,
+            model=model,
+        )
+        return result.status == BlockStatus.completed
+
     async def ai_locate_element(
         self,
         prompt: str,
@@ -643,6 +658,20 @@ class RealSkyvernPageAi(SkyvernPageAi):
         )
 
         return xpath
+
+    async def ai_prompt(
+        self,
+        prompt: str,
+        schema: dict[str, Any] | None = None,
+        model: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | list | str | None:
+        """Send a prompt to the LLM and get a response based on the provided schema."""
+        result = await script_service.prompt(
+            prompt=prompt,
+            schema=schema,
+            model=model,
+        )
+        return result
 
     async def ai_act(
         self,
